@@ -1,0 +1,113 @@
+---
+title: "Final_Project"
+author: Dylan Bauer, Prajwal Bhandari, Cameron Moore
+output: html_document
+---
+
+## Front Matter
+
+```{r}
+# load libraries and data
+library(tidyverse)
+library(readr)
+
+
+cod_p1 <- read_csv('CODGames_p1_380.csv')
+cod_p2 <- read_csv('CODGames_p2_380.csv')
+gm_data <- read_csv('CODGameModes.csv')
+map_data  <- read.csv('CODMaps.csv')
+
+# we combine the results of player 1 and player 2 according to the instructions
+# so first add a column to indicate which player it is in case it is used for the future problems
+cod_p1$player = 1
+cod_p2$player = 2
+
+full_data <- rbind(cod_p1, cod_p2)
+
+# lowercase column names.
+# AI disclosure: We asked chatgpt 4o to modify the column names with regex
+names(full_data) <- tolower(gsub("([a-z])([A-Z])", "\\1_\\2", names(full_data)))
+
+```
+
+## Task 1
+
+Which maps are the most likely to win the map vote when they are an option?
+
+To answer this question, we will need the 4 variables `map1`, `map2`, `choice`, and `map_vote` . For each map, we want to record the number of times it was entered into the vote and then calculate the number of times it was chosen for `choice` to calculate the probability. Before we do any of that, though, we should clean the map names in the `full_data` dataset by clearing whitespace if there is any and changing the misspellings if there are any. We can do this with `case_when`. We should also use the map_data dataset to make sure that there are no misspelled names in the two map columns. 
+
+To calculate the vote counts, we can split the `map_vote` column into `winning_map_vote` and `losing_map_vote` to make the comparison easier and also to indicate the method that the map won the vote by (either more votes or if it was a tie and `map1` was chosen). 
+
+Then, after calculating the probabilities of each map, we can make a ggplot visualization to display the results.
+
+```{r}
+# get a list of the clean names
+clean_names <- as.vector(unique(map_data$Name))
+
+# clean the map names and select the relevant variables for this problem
+map_vote_data <- full_data %>%
+  mutate(
+    map1 = case_when(
+      map1 %in% clean_names ~ map1,
+      map1 %in% c('Collateral', 'Collateral Streik', 'Collaterol Strike') ~ 'Collateral Strike',
+      map1 == 'Deprogam' ~ 'Deprogram',
+      map1 == 'Miami Stirke' ~ 'Miami Strike',
+      map1 == 'Ruah' ~ 'Rush',
+      map1 == 'Riad' ~ 'Raid',
+      map1 == 'Drive-in' ~ 'Drive-In'
+      ),
+    map2 = case_when(
+      map2 %in% clean_names ~ map2,
+      map2 %in% c('Miami Stirke', 'Miami Sstrike') ~ 'Miami Strike',
+      map2 == 'yamantau' ~ 'Yamantau', 
+      map2 == 'Collateral' ~ 'Collateral Strike',
+      map2 == 'Amrada Strike' ~ 'Armada Strike',
+      map2 == "Nuketown '84 Halloween" ~ "Nuketown '84",
+      map2 == 'Drive-in' ~ 'Drive-In',
+      )
+  ) %>%
+  separate(map_vote, into = c('winning_map_vote', 'losing_map_vote'), sep = ' to ', extra = 'merge', convert = TRUE) %>%
+  select(map1, map2, winning_map_vote, losing_map_vote, choice)
+
+# we can use the following two lines to make sure that there are no disparities between the map names in the full dataset and the map names in the map dataset. 
+# we expect that only NA will be returned to indicate that the names match exactly.
+setdiff(map_vote_data$map1, map_data$Name)
+setdiff(map_vote_data$map2, map_data$Name)
+    
+```
+
+Now that the data is sufficiently clean to answer the question, we can start writing code to answer the question. Notice that when one of the observations are missing for `map1`, `map2`, `map1_vote`, or `map2_vote`, the other three values are also missing so we can omit the rows that have NA observations because they do not help us answer the question in any way. 
+
+To solve this problem an ideal dataset has the following columns: `map`, `win`, `method`. We create two dataframes using only the `map1` column as the map and the second one only using the `map2` column as the map. We call them `m1_stats` and `m2_stats` respectively and concatenate the dataframes. Then we have all voting results of the two maps for all the games in a tidy format. Finally, we can use grouping to calculate the statistics for a given map. 
+```{r}
+m1_stats <- map_vote_data %>%
+  select(-map2) %>%
+  subset(!is.na(map1)) %>%
+  group_by(map1) %>%
+  summarize(
+    win = map1 == choice,
+    # there are 3 cases for the method: either a map lost, won by votes, or got forced to win because it was map1
+    method = case_when(
+    map1 != choice ~ 'Did Not Win',
+    map1 == choice & winning_map_vote > losing_map_vote ~ 'Voted',
+    map1 == choice & winning_map_vote == losing_map_vote ~ 'Forced'
+    )
+  )
+
+m2_stats <- map_vote_data %>%
+  select(-map1) %>%
+  subset(!is.na(map2)) %>%
+  group_by(map2) %>%
+  summarize(
+    win = map2 == choice,
+    # there are 3 cases for the method: either a map lost, won by votes, or got forced to win because it was map1
+    method = case_when(
+    map2 != choice ~ 'Did Not Win',
+    map2 == choice & winning_map_vote > losing_map_vote ~ 'Voted',
+    map2 == choice & winning_map_vote == losing_map_vote ~ 'Forced'
+    )
+  )
+
+```
+
+a
