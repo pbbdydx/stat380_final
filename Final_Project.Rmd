@@ -75,13 +75,13 @@ clean_data <- full_data %>%
       game_type == 'HC - Domination' ~ 'Domination'
     )
   ) %>%
-  # separate map vote and game result columns.
+  # separate map vote column. The larget number is always written first 
   separate(map_vote, into = c('winning_map_vote', 'losing_map_vote'), sep = ' to ', extra = 'merge', convert = TRUE)
 
-# make sure the name of every map is cleaned for all 3 map columns
-setdiff(test$map1, map_data$Name)
-setdiff(test$map2, map_data$Name)
-setdiff(test$choice, map_data$Name)
+# make sure the name of every map is cleaned for all 3 map columns. (set diff is NA only for missing maps)
+setdiff(clean_data$map1, map_data$Name)
+setdiff(clean_data$map2, map_data$Name)
+setdiff(clean_data$choice, map_data$Name)
 
 ```
 
@@ -96,12 +96,17 @@ Then, after calculating the probabilities of each map, we can make a ggplot visu
 ```{r}
 map_vote_data <- clean_data %>%
   select(map1, map2, winning_map_vote, losing_map_vote, choice)
+```
+The dataset looks good by inspection, except for one strange value in the 489th observation where both `map1` and `map2` have the same number of votes, but `choice` is set to `map2`. We can fix this by changing the map choice to be the first map. Now we are ready to answer the research question.
 
+```{r}
+map_vote_data[489,]$choice <- map_vote_data[489,]$map1
 ```
 
-To solve this problem an ideal dataset has the following columns: `map`, `win`, `method`. We create two dataf rames: the first one using only the `map1` column as the map and the second one only using the `map2` column as the map. We call them `m1_stats` and `m2_stats` respectively and concatenate the data frames. Then we have all voting results of the two maps for all the games in a tidy format. Finally, we can use grouping to calculate the statistics for a given map. 
 
-We run into an issue of only 1 of either `map1` or `map2` having data while the other is missing. For some of the cases, we can remedy this by checking against the `choice` column. We do this for both the `map1` and `map2` columns for `map_vote_data`. 
+To answer this question an ideal dataset would have the following columns: `map`, `win`, `method`. We create two data frames that contain map and winning statistics for the two maps: the first one using only the `map1` column as the map and the second one only using the `map2` column as the map. We call them `m1_stats` and `m2_stats` respectively and concatenate the data frames. Then we have all voting results of the two maps for all the games in a tidy format. Finally, we can use grouping to calculate the statistics for a given map. 
+
+We run into another issue of only 1 of either `map1` or `map2` having data while the other is missing. For some of the cases, we can remedy this by checking against the `choice` column. We do this for both the `map1` and `map2` columns for `map_vote_data`. 
 
 ```{r}
 # we filter here to show the few cases where this happens. in the next code chunk,
@@ -129,7 +134,7 @@ m1_stats <- map_vote_data %>%
   subset(!is.na(map1)) %>%
   group_by(map1) %>%
   reframe(
-    win = map1 == choice,
+    win = (map1 == choice),
     # there are 3 cases for the method: either a map lost, won by votes, or got forced to win because it was map1
     method = case_when(
     map1 != choice ~ 'Did Not Win',
@@ -149,8 +154,8 @@ m2_stats <- map_vote_data %>%
     win = map2 == choice,
     # there are 2 cases for map2: either it lost or it won by votes. it is never forced to be the map.
     method = case_when(
-    map2 != choice ~ 'Did Not Win',
     map2 == choice & winning_map_vote > losing_map_vote ~ 'Voted',
+    !(map2 == choice & winning_map_vote > losing_map_vote) ~ 'Did Not Win' # if it was not voted, then it did not win
     )
   ) %>%
   rename(
@@ -158,11 +163,49 @@ m2_stats <- map_vote_data %>%
   )
 
 map_stats <- rbind(m1_stats, m2_stats)
+
+# make sure map_stats does not have any NA values, if so, figure out why
+sum(is.na(m1_stats))
+sum(is.na(m2_stats))
+sum(is.na(map_stats))
 ```
 
-Finally, we use our new data frame `map_stats` to answer the question and make the visualization. This data frame contains only matches in which all map related columns are not missing (times 2; one for each map). 
+Finally, we use our new data frame `map_stats` to answer the question and make the visualization. This data frame contains only matches in which all map related columns are not missing (times 2; one for each map). If we want to answer what maps are the most likely to win a vote when they are chosen, we should get the probabilities that they win given that they are chosen and sort them by map. What we can do is get the probability of win for a single game by doing win/times the map was chosen which will calculate the probability of winning that singlee instance. Then we can ungroup the data before grouping by both map and the method of winning to get probabilities for each combination of map/method. 
 
 ```{r}
-
+map_probs <- map_stats %>%
+  group_by(map) %>%
+  mutate(
+    times_chosen = n(),
+    prob_win = win/times_chosen
+  ) %>% 
+  ungroup() %>%
+  group_by(map, method) %>%
+  summarize(
+    total_prob = sum(prob_win)
+  ) %>% 
+  group_by(map) %>%
+  mutate(
+    total_sum = sum(total_prob)
+    ) %>%
+  ungroup() %>%
+  mutate(map = reorder(map, total_sum))
+map_probs
 ```
 
+We can interpret the table above like so: When a map, say 'Amerika', was up for vote, it was chosen to be the game map 48% of the time, forced to be the map 3% of the time, and lost the other 49%, although the loss percentage is not explicitly reported in the table. 
+
+```{r}
+# making the plot
+ggplot(map_probs, aes(x = map, y = total_prob, fill = method)) + 
+  geom_bar(stat = 'identity') + 
+  labs(
+    x = 'Map', 
+    y = 'Total Probability',
+    fill = 'Method of Win',
+    title = 'Total Probability of a Map To Be Chosen When it Appears For the Map Vote'
+    ) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+TODO: x,y,z are the most common maps. draw data and insights from summary table
