@@ -209,3 +209,105 @@ ggplot(map_probs, aes(x = map, y = total_prob, fill = method)) +
 ```
 
 TODO: x,y,z are the most common maps. draw data and insights from summary table
+
+
+
+## Task 2 - Repeat Task 1 using Generative AI.
+
+We will be using ChatGPT on version GPT-4o. The prompt we used was the first copying the first question into the AI. Then it did not understand what data files had which data in it so we had to inform it of what each data file had in it (CodMaps, CodModes, etc.). We used the given project data set description from the final project file. There were some errors. First, some of the packages it included we had to download and use, which caused an error when we didn't have it. We asked about the error and it gave us the package we needed. The final follow up we asked was an error in the graph. There was a bottom bar that was 1.00 or 100% with no name so we asked why is that there. It gave us a command to fix that. 
+
+```{r}
+library(stringdist)
+
+games <- bind_rows(cod_p1, cod_p2)
+
+# --- 2. Standardize and Clean Map Names ---
+# Clean function: trim whitespace and correct spelling using string distance
+clean_map <- function(name, reference_names) {
+  name <- str_trim(name)
+  if (is.na(name)) return(NA)
+  match_index <- amatch(name, reference_names, maxDist = 2)
+  if (!is.na(match_index)) return(reference_names[match_index])
+  return(name)
+}
+
+# List of valid map names from CODMaps.csv
+valid_maps <- unique(str_trim(map_data$Name))
+
+# Clean all relevant map columns
+games <- games %>%
+  mutate(
+    Map1 = sapply(Map1, clean_map, reference_names = valid_maps),
+    Map2 = sapply(Map2, clean_map, reference_names = valid_maps),
+    Choice = sapply(Choice, clean_map, reference_names = valid_maps),
+    MapVote = sapply(MapVote, clean_map, reference_names = valid_maps)
+  )
+
+# --- 3. Filter to Only Games with Voting Info ---
+# Keep rows where Map1 and Map2 are both non-missing (indicates vote occurred)
+games_votes <- games %>%
+  filter(!is.na(Map1) & !is.na(Map2))
+
+# --- 4. Determine the Winner of Each Vote ---
+# Count number of votes for Map1 and Map2
+vote_counts <- games_votes %>%
+  rowwise() %>%
+  mutate(
+    Map1_votes = sum(MapVote == Map1, na.rm = TRUE),
+    Map2_votes = sum(MapVote == Map2, na.rm = TRUE),
+    Winner = case_when(
+      Map1_votes > Map2_votes ~ Map1,
+      Map2_votes > Map1_votes ~ Map2,
+      Map1_votes == Map2_votes ~ Map1  # tie breaker: Map1 wins
+    )
+  ) %>%
+  ungroup()
+
+# --- 5. Reshape for Aggregation ---
+# Long format: 1 row per map per match
+long_maps <- vote_counts %>%
+  pivot_longer(cols = c(Map1, Map2), names_to = "MapSlot", values_to = "Map") %>%
+  mutate(
+    Won = Map == Winner
+  )
+
+# --- 6. Aggregate Statistics ---
+# After cleaning and reshaping
+long_maps <- long_maps %>%
+  filter(!is.na(Map) & Map != "")
+
+
+map_stats <- long_maps %>%
+  group_by(Map) %>%
+  summarise(
+    Times_Offered = n(),
+    Times_Won = sum(Won),
+    Win_Rate = Times_Won / Times_Offered
+  ) %>%
+  arrange(desc(Win_Rate))
+
+# --- 7. Visualization ---
+ggplot(map_stats, aes(x = reorder(Map, -Win_Rate), y = Win_Rate)) +
+  geom_col(fill = "#2a9df4") +
+  coord_flip() +
+  labs(
+    title = "Map Win Rates When Offered as a Voting Option",
+    x = "Map",
+    y = "Win Rate"
+  ) +
+  theme_minimal()
+```
+
+Comparing solutions
+
+Point 1:
+
+To start, the data cleaning approach was different. Our solution takes a more manual approach while the AI uses more automated function. It uses the function `amatch` from a new package to replace certain misspelled words. We used `setdiff()` and `case_when` for replacing misspelled words that we knew where misspelled. The manual approach has some benefits like controlling what we change and why we changed it compared to AI where you don't really know what happened. AI used a more automated approach using `amatch`. This is probably better for a large list of typos that may be unknown. This could cause problems because it could make false corrections and be hard to debug. In conclusion, the manual cleaning we did was the safer option compared to AI's option.
+
+Point 2:
+
+Next, the handling of missing information was different between the two. In our solution, we had a little more attention to detail. For example, we fixed cases where both map1 and map2 were not present. We corrected ties when the wrong map was chosen. We fixed the `choice` column for missing values as well. This made sure the win rates did not have any incomplete or missing data values. On the other hand, the AI handled the ties, but did not fix the one map entries or missing values. This could cause problems with the final results. In all, we had thoughtful corrections while AI again used more formulas that are not as reliable. 
+
+Point 3:
+
+Finally, the presentation and results were different. We both were trying to solve the same thing but got different results. We used a stacked bar chart that included forced wins as part of the total. The AI had a horizontal chart and only used the voting wins. It did not account for forced wins like we did. For our method, we counted each map in every vote (map1 and map2) and summed a win or loss. We combined them and calculated the probability. On the other hand, AI used a single row and only counted how many times a map was selected out of the times it was available. To sum, our method has a deeper understanding of the data while AI is simpler and doesn't go as in depth. 
