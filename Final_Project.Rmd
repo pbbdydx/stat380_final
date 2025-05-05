@@ -11,6 +11,8 @@ output: html_document
 rm(list = ls())
 library(tidyverse)
 library(readr)
+library(caret)
+library(e1071)
 
 cod_p1 <- read_csv('CODGames_p1_380.csv')
 cod_p2 <- read_csv('CODGames_p2_380.csv')
@@ -311,3 +313,58 @@ Next, the handling of missing information was different between the two. In our 
 Point 3:
 
 Finally, the presentation and results were different. We both were trying to solve the same thing but got different results. We used a stacked bar chart that included forced wins as part of the total. The AI had a horizontal chart and only used the voting wins. It did not account for forced wins like we did. For our method, we counted each map in every vote (map1 and map2) and summed a win or loss. We combined them and calculated the probability. On the other hand, AI used a single row and only counted how many times a map was selected out of the times it was available. To sum, our method has a deeper understanding of the data while AI is simpler and doesn't go as in depth. 
+
+##Task 4
+
+Research Question:
+Can we predict whether Player 1 will achieve an above-median XP total in a Call of Duty match based on in-game performance metrics like eliminations, damage dealt, and score? By framing this as a binary classification problem, we sought to evaluate how well different statistical learning methods could distinguish between high- and low-performing matches.
+
+```{r}
+# Filter to Player 1 data and ensure relevant columns are clean
+xp_class_data <- clean_data %>%
+  filter(player == 1) %>%
+  select(eliminations, score, damage, total_xp) %>%
+  drop_na()
+
+# Create a binary target: 1 if above median XP, 0 otherwise
+median_xp <- median(xp_class_data$total_xp)
+xp_class_data <- xp_class_data %>%
+  mutate(high_xp = ifelse(total_xp > median_xp, 1, 0)) %>%
+  select(-total_xp)
+
+# Stratified split using caret
+library(caret)
+set.seed(42)
+train_index <- createDataPartition(xp_class_data$high_xp, p = 0.8, list = FALSE)
+train_set <- xp_class_data[train_index, ]
+test_set <- xp_class_data[-train_index, ]
+
+# --- Logistic Regression ---
+log_model <- glm(high_xp ~ ., data = train_set, family = "binomial")
+log_preds <- predict(log_model, test_set, type = "response")
+log_class <- ifelse(log_preds > 0.5, 1, 0)
+log_acc <- mean(log_class == test_set$high_xp)
+
+# --- Random Forest ---
+library(randomForest)
+rf_model <- randomForest(as.factor(high_xp) ~ ., data = train_set)
+rf_preds <- predict(rf_model, test_set)
+rf_acc <- mean(rf_preds == test_set$high_xp)
+
+# --- SVM ---
+library(e1071)
+svm_model <- svm(as.factor(high_xp) ~ ., data = train_set, kernel = "radial")
+svm_preds <- predict(svm_model, test_set)
+svm_acc <- mean(svm_preds == test_set$high_xp)
+
+# Compare results
+model_results <- tibble(
+  Model = c("Logistic Regression", "Random Forest", "SVM"),
+  Accuracy = c(log_acc, rf_acc, svm_acc)
+)
+model_results
+```
+To begin, we filtered the dataset to include only rows corresponding to Player 1. We selected three predictors-eliminations, score, and damage—and the outcome variable, total XP. We then created a new binary target variable named high_xp, which was assigned a value of 1 if the player’s XP for that match exceeded the overall median, and 0 otherwise. This ensured a balanced classification task. After removing any rows with missing values, we used a stratified 80/20 train-test split to prepare the data for modeling.
+Three classification methods were implemented: logistic regression, random forest, and support vector machine (SVM). Logistic regression models the log-odds of the response as a linear combination of predictors and is useful for understanding the direction and strength of each variable's influence. Random forest, an ensemble method, constructs many decision trees and combines their results to make robust, low-variance predictions. Finally, SVM, which was not covered in class, was chosen as the new method to explore. SVM finds the hyperplane that best separates the classes in a high-dimensional space and can model non-linear relationships using kernel functions. In our case, we used the radial basis function (RBF) kernel.
+All three models were trained on the same training data and evaluated using classification accuracy on the test set. Logistic regression achieved an accuracy of about 70.8%, random forest improved slightly with 72.6%, and SVM outperformed both with an accuracy of 75.2%. These results suggest that non-linear classification methods such as SVM and random forest are better suited for this task, likely because the relationship between the predictors and XP is not strictly linear.
+In conclusion, we were able to build effective classification models to predict whether Player 1 would gain above-median XP in a match. Among the three methods, SVM provided the best results, indicating its strong performance in handling complex patterns in the data. These insights could help players or analysts understand what types of in-game behavior are most associated with higher XP outcomes.
