@@ -12,6 +12,7 @@ rm(list = ls())
 library(tidyverse)
 library(readr)
 library(caret)
+library(randomForest)
 library(e1071)
 
 cod_p1 <- read_csv('CODGames_p1_380.csv')
