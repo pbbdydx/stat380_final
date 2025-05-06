@@ -10,11 +10,11 @@ output: html_document
 # clear env, load libraries and data
 rm(list = ls())
 library(tidyverse)
-library(readr)
 library(stringdist)
 library(caret)
 library(randomForest)
 library(e1071)
+library(emmeans)
 
 cod_p1 <- read_csv('CODGames_p1_380.csv')
 cod_p2 <- read_csv('CODGames_p2_380.csv')
@@ -101,14 +101,12 @@ Then, after calculating the probabilities of each map, we can make a ggplot visu
 map_vote_data <- clean_data %>%
   select(map1, map2, winning_map_vote, losing_map_vote, choice)
 ```
+
 The dataset looks good by inspection, except for one strange value in the 489th observation where both `map1` and `map2` have the same number of votes, but `choice` is set to `map2`. We can fix this by changing the map choice to be the first map. Now we are ready to answer the research question.
 
 ```{r}
 map_vote_data[489,]$choice <- map_vote_data[489,]$map1
 ```
-
-
-To answer this question an ideal dataset would have the following columns: `map`, `win`, `method`. We create two data frames that contain map and winning statistics for the two maps: the first one using only the `map1` column as the map and the second one only using the `map2` column as the map. We call them `m1_stats` and `m2_stats` respectively and concatenate the data frames. Then we have all voting results of the two maps for all the games in a tidy format. Finally, we can use grouping to calculate the statistics for a given map. 
 
 We run into another issue of only 1 of either `map1` or `map2` having data while the other is missing. For some of the cases, we can remedy this by checking against the `choice` column. We do this for both the `map1` and `map2` columns for `map_vote_data`. 
 
@@ -122,6 +120,7 @@ map_vote_data %>%
 ```
 
 There are a few cases that we work through to fix this issue. If one column is the same as the choice and the other column is missing, there isnt much that can be done. If the choice is unknown, then we also cannot do much. Finally, if one of the columns exist and is not the same as choice, then the other column has to be the choice. 
+
 ```{r}
 map_vote_data <- map_vote_data %>%
   mutate(
@@ -131,8 +130,13 @@ map_vote_data <- map_vote_data %>%
     map2 = if_else(map1 != choice, choice, map2),
     choice = if_else(map2 == choice & is.na(map1), NA, choice)
   )
+```
 
-# start creating the dataframes that are used for this question
+
+To answer this question an ideal dataset would have the following columns: `map`, `win`, `method`. We create two data frames that contain map and winning statistics for the two maps: the first one using only the `map1` column as the map and the second one only using the `map2` column as the map. We call them `m1_stats` and `m2_stats` respectively and concatenate the data frames. Then we have all voting results of the two maps for all the games in a tidy format. Finally, we can use grouping to calculate the statistics for a given map. 
+
+```{r}
+# create the dataframes that are used for this question
 m1_stats <- map_vote_data %>%
   select(-map2) %>%
   subset(!is.na(map1)) %>%
@@ -168,13 +172,12 @@ m2_stats <- map_vote_data %>%
 
 map_stats <- rbind(m1_stats, m2_stats)
 
-# make sure map_stats does not have any NA values, if so, figure out why
-sum(is.na(m1_stats))
-sum(is.na(m2_stats))
+# make sure map_stats does not have any NA values
+
 sum(is.na(map_stats))
 ```
 
-Finally, we use our new data frame `map_stats` to answer the question and make the visualization. This data frame contains only matches in which all map related columns are not missing (times 2; one for each map). If we want to answer what maps are the most likely to win a vote when they are chosen, we should get the probabilities that they win given that they are chosen and sort them by map. What we can do is get the probability of win for a single game by doing win/times the map was chosen which will calculate the probability of winning that singlee instance. Then we can ungroup the data before grouping by both map and the method of winning to get probabilities for each combination of map/method. 
+Finally, we use our new data frame `map_stats` to answer the question and make the visualization. This data frame contains only matches in which all map related columns are not missing. If we want to answer what maps are the most likely to win a vote when they are chosen, we should get the probabilities that they win given that they are chosen and sort them by map. What we can do is get the probability of win for a single game by doing win/times the map was chosen which will calculate the probability of winning that single instance. Then we can ungroup the data before grouping by both map and the method of winning to get probabilities for each combination of map/method. 
 
 ```{r}
 map_probs <- map_stats %>%
@@ -186,7 +189,8 @@ map_probs <- map_stats %>%
   ungroup() %>%
   group_by(map, method) %>%
   summarize(
-    total_prob = sum(prob_win)
+    total_prob = sum(prob_win),
+    .groups = 'drop'
   ) %>% 
   group_by(map) %>%
   mutate(
@@ -201,18 +205,21 @@ We can interpret the table above like so: When a map, say 'Amerika', was up for 
 
 ```{r}
 # making the plot
-ggplot(map_probs, aes(x = map, y = total_prob, fill = method)) + 
-  geom_bar(stat = 'identity') + 
+map_probs %>%
+  filter(total_prob != 0) %>%
+  ggplot(aes(x = map, y = total_prob, fill = method)) + 
+  geom_bar(stat = 'identity', color = 'black') + 
   labs(
     x = 'Map', 
     y = 'Total Probability',
     fill = 'Method of Win',
     title = 'Total Probability of a Map To Be Chosen When it Appears For the Map Vote'
     ) + 
+  theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-TODO: x,y,z are the most common maps. draw data and insights from summary table
+From the visualization and summary statistics above, we see that Nuketown '84, Crossroads Strike, and Raid are the three maps with the highest probabilities of being chosen for a vote with p = 0.820, 0.775, and 0.772 respectively. What is surprising is that Raid has the highest probability of winning via voting at p = 0.727, while the two maps with higher total probabilities  make up for lower voting rates with higher rated of being forced to win. It's interesting to see that Diesel has the smallest probability that it is forced to be the map at 0.018, but is actually the one of the highest maps for probability of being voted as the game map with p = 0.690, falling closely in 4th place behind Nuketown '84 with p = 0.692, and Crossroads Strike with p = 0.706. On the other side of the spectrum, Miami, Echelon, and Deprogram / Armada Strike (tied) are chosen the least at p = 0.120, 0.178, and 0.244.
 
 
 
@@ -221,7 +228,6 @@ TODO: x,y,z are the most common maps. draw data and insights from summary table
 We will be using ChatGPT on version GPT-4o. The prompt we used was the first copying the first question into the AI. Then it did not understand what data files had which data in it so we had to inform it of what each data file had in it (CodMaps, CodModes, etc.). We used the given project data set description from the final project file. There were some errors. First, some of the packages it included we had to download and use, which caused an error when we didn't have it. We asked about the error and it gave us the package we needed. The final follow up we asked was an error in the graph. There was a bottom bar that was 1.00 or 100% with no name so we asked why is that there. It gave us a command to fix that. 
 
 ```{r}
-
 games <- bind_rows(cod_p1, cod_p2)
 
 # --- 2. Standardize and Clean Map Names ---
@@ -298,7 +304,7 @@ ggplot(map_stats, aes(x = reorder(Map, -Win_Rate), y = Win_Rate)) +
     x = "Map",
     y = "Win Rate"
   ) +
-  theme_minimal()
+  theme_bw()
 ```
 
 Comparing solutions
@@ -309,17 +315,18 @@ To start, the data cleaning approach was different. Our solution takes a more ma
 
 Point 2:
 
-Next, the handling of missing information was different between the two. In our solution, we had a little more attention to detail. For example, we fixed cases where both map1 and map2 were not present. We corrected ties when the wrong map was chosen. We fixed the `choice` column for missing values as well. This made sure the win rates did not have any incomplete or missing data values. On the other hand, the AI handled the ties, but did not fix the one map entries or missing values. This could cause problems with the final results. In all, we had thoughtful corrections while AI again used more formulas that are not as reliable. 
+Next, the handling of missing information was different between the two. In our solution, we had a little more attention to detail. For example, we fixed cases where both map1 and map2 were not present. We corrected ties when the wrong map was chosen. We fixed the `choice` column for missing values as well. This made sure the win rates did not have any incomplete or missing data values. On the other hand, the AI handled the ties, but did not fix the one map entries or missing values. This caused some noticeable discrepancies with our final results, where the top maps and their selection rates do not match with the ones in our solutions. In all, we had thoughtful corrections that made the analysis more robust while ChatGPT opted for a more algorithmic approach that may not have done the due diligence that was warranted in answering research question 1.
 
 Point 3:
 
 Finally, the presentation and results were different. We both were trying to solve the same thing but got different results. We used a stacked bar chart that included forced wins as part of the total. The AI had a horizontal chart and only used the voting wins. It did not account for forced wins like we did. For our method, we counted each map in every vote (map1 and map2) and summed a win or loss. We combined them and calculated the probability. On the other hand, AI used a single row and only counted how many times a map was selected out of the times it was available. To sum, our method has a deeper understanding of the data while AI is simpler and doesn't go as in depth. 
 
+Using artificial intelligence tools for statistical analysis is a double edged sword we hope to have demonstrated the increased risk of side effects when there are edge cases present in the data and why these tasks should be done by trained analysts and statisticians whenever possible.
+
 
 ## Task 3
 
 Research Question -  How does the game type affect TotalXP after accounting for the Score?
-
 
 First, some of the data cleaning was included in the beginning of our document. But we did notice a lot of cases where game type and/or score was a NA value so we got rid of those. 
 
@@ -333,10 +340,9 @@ no_na_clean <-
   filter(!is.na(score))
 ```
 
-There were 364 NA values in the game_type column and 31 score values that were NA. There could have been some overlapping also.  
+There were 364 NA values in the game_type column and 31 score values that were NA. There could have been some overlapping also. Because dealing with missing values presents itself to greater challenges than anticipated, we opt to only work with the data that we do have and thus filter for rows where the data does exist.
 
-
-Next we need to do some EDA and look at relationships between the variables. We will make a few different visualizations.
+Next we need to do some EDA and look at relationships between the variables. We will make a summary table and a few different visualizations.
 
 ```{r}
 no_na_clean %>%
@@ -350,16 +356,16 @@ no_na_clean %>%
   )
 ```
 
-
 Look at the table above, we can see that the game type played the most was TDM at 346 and least was Domination at 11. Domination has the highest mean score at 3174.091 and also mean total xp at 16151.091. The lowest mean score is Kill Confirmed with 1983.571 and also the lowest mean Xp at 9089.571. 
 
 ```{r}
 # Distribution of GameType
 ggplot(mapping = aes(x = game_type), data = no_na_clean) +
-  geom_bar() +
+  geom_bar(fill = 'steelblue', color = 'black') +
   labs(title = "Distribution of Game Types", 
        x = "Game Type",
-       y = "Count")
+       y = "Count") +
+  theme_bw()
 ```
 
 We can see the distribution of each game type above that goes with our table. TDM has far more times played then the rest of the game types. 
@@ -372,18 +378,21 @@ ggplot(mapping = aes(x = score, y = total_xp, color = game_type), data = no_na_c
   labs(title = "TotalXP vs Score by Game Type", 
        x = "Score", 
        y = "Total Xp",
-       color = "Game Type")
+       color = "Game Type") +
+  theme_bw()
 ```
 
-Looking at the plots here, we can see a positive correlation between score and total xp for all the game types. As the score increases, the total xp will also increase. For some game types, the slope is steeper meaning there might be a evidence that some game modes give more xp per score compared to others. 
+Looking at the plots here, we can see a positive relationship between score and total xp for all the game types. As the score increases, the total xp will also increase. For some game types, the slope is steeper meaning there might be a evidence that some game modes give more xp per score compared to others. 
 
 
 ```{r}
 ggplot(mapping = aes(x = game_type, y = total_xp), data = no_na_clean) +
-  geom_boxplot() +
+  geom_boxplot(fill = 'steelblue', color = 'black') +
   labs(title = "TotalXP Distribution by GameType",
        x = "Game Type",
-       y = "Total Xp")
+       y = "Total Xp"
+       ) + 
+  theme_bw()
 ```
 
 Looking at the boxplots here, we can see a lot of high outliers for Hardpoint and TDM. The highest median XP is Domination and lowest is Kill Confirmed.
@@ -394,11 +403,24 @@ model3 <- lm(total_xp ~ score + game_type, data = no_na_clean)
 summary(model3)
 ```
 
-In the above model we fitted the linear regression model with the response Total Xp and the input variables as Score and Game Type. For game type, the baseline is domination. Score is a significant predictor of total xp. If we hold game type constant, a 1-unit increase in score will lead to an increase in total xp by 2.36. Now to answer the question, we will have to compare each game type to the baseline domination. If we keep score constant, the game type "hardpoint" will have on average 208 less xp than domination. When accounting for score, the game type "kill confirmed" will have 4,251 fewer xp on average than domination. Finally, when accounting for score, if the game type is "TDM", it is 2,892 less xp than domination on average. "Domination's" intercept of 8,658.8870 isn't realistic because you would need a score of zero. In all, after accounting for score, game type has a moderate affect on TotalXp. When playing in Kill Confirmed and TDM, the players were getting a more notable decrease in xp compared to domination. When playing Hardpoint, the difference from Domination was not that significantly different when keeping score constant. 
+In the above model we fitted the linear regression model with the response Total Xp and the input variables as Score and Game Type. For game type, the baseline is domination. Score is a significant predictor of total XP. If we hold game type constant, a 1-unit increase in score will lead to an increase in total xp by 2.36. Now to answer the question, we will have to compare each game type to the baseline domination. If we keep score constant, the game type "Hardpoint" will have on average 208 less XP than domination. When accounting for score, the game type "Kill Confirmed" will have 4,251 fewer xp on average than domination. Finally, when accounting for score, if the game type is "TDM", it is 2,892 less XP than domination on average. "Domination"'s intercept of 8,658.8870 isn't realistic because you would need a score of zero. In all, after accounting for score, game type has a moderate affect on TotalXP. When playing in Kill Confirmed and TDM, the players were getting a more notable decrease in XP compared to domination. When playing Hardpoint, the difference from Domination was not that significantly different when keeping score constant. 
 
+Finally, to conduct a more robust analysis on the effect of the game type and score on total XP, we will run an ANOVA model on `model3` and then post-hoc diagnostics if results are significant.
+```{r}
+aov_model <- aov(model3)
+summary(aov_model)
+```
 
+The ANOVA model agrees with our previous assertion that score is a significant predictor and also shows that game_type is a significant predictor. Now, we conduct a post-hoc comparison of means using Bonferroni's adjustment to account for family-wise error rates.
 
-##Task 4
+```{r}
+em_aovmodel <- emmeans(aov_model, ~ game_type)
+pairs(em_aovmodel, adjust = 'bonferroni')
+```
+
+Using this post-hoc analysis, only one game type comparison yielded a significant result: Hardpoint vs TDM. 
+
+## Task 4
 
 Research Question:
 Can we predict whether Player 1 will achieve an above-median XP total in a Call of Duty match based on in-game performance metrics like eliminations, damage dealt, and score? By framing this as a binary classification problem, we sought to evaluate how well different statistical learning methods could distinguish between high- and low-performing matches.
@@ -448,7 +470,10 @@ model_results <- tibble(
 )
 model_results
 ```
+
 To begin, we filtered the dataset to include only rows corresponding to Player 1. We selected three predictors-eliminations, score, and damage—and the outcome variable, total XP. We then created a new binary target variable named high_xp, which was assigned a value of 1 if the player’s XP for that match exceeded the overall median, and 0 otherwise. This ensured a balanced classification task. After removing any rows with missing values, we used a stratified 80/20 train-test split to prepare the data for modeling.
+
 Three classification methods were implemented: logistic regression, random forest, and support vector machine (SVM). Logistic regression models the log-odds of the response as a linear combination of predictors and is useful for understanding the direction and strength of each variable's influence. Random forest, an ensemble method, constructs many decision trees and combines their results to make robust, low-variance predictions. Finally, SVM, which was not covered in class, was chosen as the new method to explore. SVM finds the hyperplane that best separates the classes in a high-dimensional space and can model non-linear relationships using kernel functions. In our case, we used the radial basis function (RBF) kernel.
+
 All three models were trained on the same training data and evaluated using classification accuracy on the test set. Logistic regression achieved an accuracy of about 70.8%, random forest improved slightly with 72.6%, and SVM outperformed both with an accuracy of 75.2%. These results suggest that non-linear classification methods such as SVM and random forest are better suited for this task, likely because the relationship between the predictors and XP is not strictly linear.
 In conclusion, we were able to build effective classification models to predict whether Player 1 would gain above-median XP in a match. Among the three methods, SVM provided the best results, indicating its strong performance in handling complex patterns in the data. These insights could help players or analysts understand what types of in-game behavior are most associated with higher XP outcomes.
