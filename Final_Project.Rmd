@@ -11,6 +11,7 @@ output: html_document
 rm(list = ls())
 library(tidyverse)
 library(readr)
+library(stringdist)
 library(caret)
 library(randomForest)
 library(e1071)
@@ -220,7 +221,6 @@ TODO: x,y,z are the most common maps. draw data and insights from summary table
 We will be using ChatGPT on version GPT-4o. The prompt we used was the first copying the first question into the AI. Then it did not understand what data files had which data in it so we had to inform it of what each data file had in it (CodMaps, CodModes, etc.). We used the given project data set description from the final project file. There were some errors. First, some of the packages it included we had to download and use, which caused an error when we didn't have it. We asked about the error and it gave us the package we needed. The final follow up we asked was an error in the graph. There was a bottom bar that was 1.00 or 100% with no name so we asked why is that there. It gave us a command to fix that. 
 
 ```{r}
-library(stringdist)
 
 games <- bind_rows(cod_p1, cod_p2)
 
@@ -314,6 +314,89 @@ Next, the handling of missing information was different between the two. In our 
 Point 3:
 
 Finally, the presentation and results were different. We both were trying to solve the same thing but got different results. We used a stacked bar chart that included forced wins as part of the total. The AI had a horizontal chart and only used the voting wins. It did not account for forced wins like we did. For our method, we counted each map in every vote (map1 and map2) and summed a win or loss. We combined them and calculated the probability. On the other hand, AI used a single row and only counted how many times a map was selected out of the times it was available. To sum, our method has a deeper understanding of the data while AI is simpler and doesn't go as in depth. 
+
+
+## Task 3
+
+Research Question -  How does the game type affect TotalXP after accounting for the Score?
+
+
+First, some of the data cleaning was included in the beginning of our document. But we did notice a lot of cases where game type and/or score was a NA value so we got rid of those. 
+
+```{r}
+sum(is.na(clean_data$game_type))
+sum(is.na(clean_data$score))
+
+no_na_clean <- 
+  clean_data %>%
+  filter(!is.na(game_type)) %>%
+  filter(!is.na(score))
+```
+
+There were 364 NA values in the game_type column and 31 score values that were NA. There could have been some overlapping also.  
+
+
+Next we need to do some EDA and look at relationships between the variables. We will make a few different visualizations.
+
+```{r}
+no_na_clean %>%
+  group_by(game_type) %>%
+  summarize(
+    N = n(),
+    mean_Score = mean(score),
+    median_Score = median(score),
+    mean_TotalXP = mean(total_xp),
+    median_TotalXP = median(total_xp)
+  )
+```
+
+
+Look at the table above, we can see that the game type played the most was TDM at 346 and least was Domination at 11. Domination has the highest mean score at 3174.091 and also mean total xp at 16151.091. The lowest mean score is Kill Confirmed with 1983.571 and also the lowest mean Xp at 9089.571. 
+
+```{r}
+# Distribution of GameType
+ggplot(mapping = aes(x = game_type), data = no_na_clean) +
+  geom_bar() +
+  labs(title = "Distribution of Game Types", 
+       x = "Game Type",
+       y = "Count")
+```
+
+We can see the distribution of each game type above that goes with our table. TDM has far more times played then the rest of the game types. 
+
+```{r}
+ggplot(mapping = aes(x = score, y = total_xp, color = game_type), data = no_na_clean) +
+  geom_point() + 
+  geom_smooth(method = lm, se = F) +
+  facet_wrap(~ game_type) +
+  labs(title = "TotalXP vs Score by Game Type", 
+       x = "Score", 
+       y = "Total Xp",
+       color = "Game Type")
+```
+
+Looking at the plots here, we can see a positive correlation between score and total xp for all the game types. As the score increases, the total xp will also increase. For some game types, the slope is steeper meaning there might be a evidence that some game modes give more xp per score compared to others. 
+
+
+```{r}
+ggplot(mapping = aes(x = game_type, y = total_xp), data = no_na_clean) +
+  geom_boxplot() +
+  labs(title = "TotalXP Distribution by GameType",
+       x = "Game Type",
+       y = "Total Xp")
+```
+
+Looking at the boxplots here, we can see a lot of high outliers for Hardpoint and TDM. The highest median XP is Domination and lowest is Kill Confirmed.
+
+
+```{r}
+model3 <- lm(total_xp ~ score + game_type, data = no_na_clean)
+summary(model3)
+```
+
+In the above model we fitted the linear regression model with the response Total Xp and the input variables as Score and Game Type. For game type, the baseline is domination. Score is a significant predictor of total xp. If we hold game type constant, a 1-unit increase in score will lead to an increase in total xp by 2.36. Now to answer the question, we will have to compare each game type to the baseline domination. If we keep score constant, the game type "hardpoint" will have on average 208 less xp than domination. When accounting for score, the game type "kill confirmed" will have 4,251 fewer xp on average than domination. Finally, when accounting for score, if the game type is "TDM", it is 2,892 less xp than domination on average. "Domination's" intercept of 8,658.8870 isn't realistic because you would need a score of zero. In all, after accounting for score, game type has a moderate affect on TotalXp. When playing in Kill Confirmed and TDM, the players were getting a more notable decrease in xp compared to domination. When playing Hardpoint, the difference from Domination was not that significantly different when keeping score constant. 
+
+
 
 ##Task 4
 
